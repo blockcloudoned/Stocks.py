@@ -16,6 +16,14 @@ from utils.technical_indicators import (
 )
 from utils.chart_utils import add_pattern_shapes, create_candlestick_chart
 
+# Import database functions
+from database import (
+    initialize_database, get_user, get_watchlists, add_to_watchlist, 
+    remove_from_watchlist, record_trade, get_trades, get_positions,
+    get_user_preferences, update_user_preferences, save_pattern_detection,
+    get_recent_pattern_detections
+)
+
 # Set page config
 st.set_page_config(
     page_title="Stock Pattern Detector",
@@ -23,13 +31,26 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize database on first run
+if 'db_initialized' not in st.session_state:
+    initialize_database()
+    st.session_state.db_initialized = True
+
 # Initialize session state variables
-if 'trades' not in st.session_state:
-    st.session_state.trades = []
-if 'balance' not in st.session_state:
-    st.session_state.balance = 10000.0
+if 'user_id' not in st.session_state:
+    # Get the default user
+    user = get_user("default_user")
+    st.session_state.user_id = user["id"]
+    st.session_state.username = user["username"]
+    st.session_state.balance = user["balance"]
+
+# Cache the user's positions and trades (we'll refresh these when needed)
 if 'positions' not in st.session_state:
-    st.session_state.positions = {}
+    st.session_state.positions = get_positions(st.session_state.user_id)
+if 'trades' not in st.session_state:
+    st.session_state.trades = get_trades(st.session_state.user_id)
+if 'preferences' not in st.session_state:
+    st.session_state.preferences = get_user_preferences(st.session_state.user_id)
 
 # App title and description
 st.title("📊 Stock & Crypto Pattern Detector")
@@ -406,73 +427,30 @@ if fetch_button or 'data' in st.session_state:
                     
                     trade_value = current_price * trade_quantity
                     
-                    if trade_action == "Buy":
-                        if trade_value <= st.session_state.balance:
-                            # Update balance
-                            st.session_state.balance -= trade_value
-                            
-                            # Update positions
-                            if trade_symbol in st.session_state.positions:
-                                # Average down/up
-                                current_quantity = st.session_state.positions[trade_symbol]['quantity']
-                                current_value = current_quantity * st.session_state.positions[trade_symbol]['price']
-                                new_value = current_value + trade_value
-                                new_quantity = current_quantity + trade_quantity
-                                new_price = new_value / new_quantity
-                                
-                                st.session_state.positions[trade_symbol] = {
-                                    'quantity': new_quantity,
-                                    'price': new_price
-                                }
-                            else:
-                                st.session_state.positions[trade_symbol] = {
-                                    'quantity': trade_quantity,
-                                    'price': current_price
-                                }
-                            
-                            # Record the trade
-                            st.session_state.trades.append({
-                                'time': datetime.datetime.now(),
-                                'symbol': trade_symbol,
-                                'action': 'Buy',
-                                'quantity': trade_quantity,
-                                'price': current_price,
-                                'value': trade_value
-                            })
-                            
-                            st.success(f"Purchased {trade_quantity} shares of {trade_symbol} at ${current_price:.2f}")
-                            st.rerun()
-                        else:
-                            st.error(f"Insufficient funds! Trade value: ${trade_value:.2f}, Balance: ${st.session_state.balance:.2f}")
+                    # Save trade in database
+                    trade_result = record_trade(
+                        st.session_state.user_id,
+                        trade_symbol,
+                        trade_action,
+                        trade_quantity,
+                        current_price,
+                        notes=f"Trade executed from pattern detector app"
+                    )
                     
-                    elif trade_action == "Sell":
-                        if trade_symbol in st.session_state.positions and st.session_state.positions[trade_symbol]['quantity'] >= trade_quantity:
-                            # Update balance
-                            st.session_state.balance += trade_value
-                            
-                            # Update positions
-                            current_quantity = st.session_state.positions[trade_symbol]['quantity']
-                            new_quantity = current_quantity - trade_quantity
-                            
-                            if new_quantity > 0:
-                                st.session_state.positions[trade_symbol]['quantity'] = new_quantity
-                            else:
-                                del st.session_state.positions[trade_symbol]
-                            
-                            # Record the trade
-                            st.session_state.trades.append({
-                                'time': datetime.datetime.now(),
-                                'symbol': trade_symbol,
-                                'action': 'Sell',
-                                'quantity': trade_quantity,
-                                'price': current_price,
-                                'value': trade_value
-                            })
-                            
-                            st.success(f"Sold {trade_quantity} shares of {trade_symbol} at ${current_price:.2f}")
-                            st.rerun()
-                        else:
-                            st.error(f"Insufficient shares to sell! You own: {st.session_state.positions.get(trade_symbol, {}).get('quantity', 0)} shares of {trade_symbol}")
+                    if trade_result["success"]:
+                        # Update local session state
+                        st.session_state.balance = trade_result["new_balance"]
+                        
+                        # Refresh positions from database
+                        st.session_state.positions = get_positions(st.session_state.user_id)
+                        
+                        # Refresh trades from database
+                        st.session_state.trades = get_trades(st.session_state.user_id)
+                        
+                        st.success(trade_result["message"])
+                        st.rerun()
+                    else:
+                        st.error(trade_result["message"])
                 
                 # Trading history
                 if st.session_state.trades:
@@ -480,19 +458,41 @@ if fetch_button or 'data' in st.session_state:
                     
                     trades_data = []
                     for t in st.session_state.trades:
-                        # Handle any potential timestamp formatting issues
+                        # Format trade data from database records
                         try:
-                            time_str = t['time'].strftime("%Y-%m-%d %H:%M")
-                        except:
-                            time_str = str(t['time'])
+                            if isinstance(t, dict):
+                                # Handle old format from session state
+                                time_str = t['time'].strftime("%Y-%m-%d %H:%M") if hasattr(t['time'], 'strftime') else str(t['time'])
+                                symbol = t['symbol']
+                                action = t['action']
+                                quantity = t['quantity']
+                                price = t['price']
+                                value = t['value']
+                            else:
+                                # Handle database record format
+                                time_str = t.trade_time.strftime("%Y-%m-%d %H:%M") if hasattr(t.trade_time, 'strftime') else str(t.trade_time)
+                                symbol = t.symbol
+                                action = t.action
+                                quantity = t.quantity
+                                price = t.price
+                                value = t.total_value
+                        except Exception as e:
+                            # Fallback with basic formatting if there's an error
+                            st.warning(f"Error formatting trade: {str(e)}")
+                            time_str = str(getattr(t, 'trade_time', 'Unknown'))
+                            symbol = getattr(t, 'symbol', 'Unknown')
+                            action = getattr(t, 'action', 'Unknown')
+                            quantity = getattr(t, 'quantity', 0)
+                            price = getattr(t, 'price', 0)
+                            value = getattr(t, 'total_value', 0)
                             
                         trades_data.append({
                             "Time": time_str,
-                            "Symbol": t['symbol'],
-                            "Action": t['action'],
-                            "Quantity": t['quantity'],
-                            "Price": f"${t['price']:.2f}",
-                            "Value": f"${t['value']:.2f}"
+                            "Symbol": symbol,
+                            "Action": action,
+                            "Quantity": quantity,
+                            "Price": f"${price:.2f}",
+                            "Value": f"${value:.2f}"
                         })
                     
                     trades_df = pd.DataFrame(trades_data)
