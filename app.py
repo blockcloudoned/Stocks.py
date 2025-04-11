@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime
+import base64
 from io import StringIO
 
 from utils.data_fetcher import fetch_stock_data
@@ -792,6 +793,166 @@ if fetch_button or 'data' in st.session_state:
                     
                     trades_df = pd.DataFrame(trades_data)
                     st.dataframe(trades_df)
+            
+            # Share & Export Tab
+            with pattern_tabs[4]:
+                st.markdown("### Share & Export Detected Patterns")
+                
+                # Create tabs for different sharing/export options
+                share_tabs = st.tabs(["Social Sharing", "Export Options", "Generate Image"])
+                
+                # Social Sharing Tab
+                with share_tabs[0]:
+                    st.subheader("Share Your Analysis")
+                    
+                    # Select pattern to share
+                    detected_pattern_types = []
+                    
+                    # Collect all detected pattern types
+                    for pattern_name, pattern_locations in patterns.items():
+                        if isinstance(pattern_locations, tuple):
+                            # Skip support/resistance which returns a tuple
+                            continue
+                        
+                        if pattern_locations and len(pattern_locations) > 0:
+                            formatted_name = pattern_name.replace('_', ' ').title()
+                            detected_pattern_types.append(formatted_name)
+                    
+                    if detected_pattern_types:
+                        share_pattern_type = st.selectbox("Select pattern to share:", detected_pattern_types)
+                        
+                        # Create a sharing link
+                        share_link = get_sharing_link(symbol, share_pattern_type, f"{start_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}")
+                        
+                        # Custom sharing message
+                        share_title = f"I found a {share_pattern_type} pattern for {symbol}!"
+                        share_description = st.text_area("Customize your message:", 
+                            value=f"I detected a {share_pattern_type} pattern for {symbol} using Chart Pattern Detector. Current price: ${data['Close'].iloc[-1]:.2f}")
+                        
+                        # Display sharing buttons
+                        st.markdown("### Share on Social Media")
+                        st.markdown(get_social_share_html(share_title, share_description, url=share_link), unsafe_allow_html=True)
+                        
+                        # Copy link option
+                        st.text_input("Or copy this link:", value=share_link)
+                    else:
+                        st.info("No patterns were detected to share. Try adjusting the pattern detection settings.")
+                
+                # Export Options Tab
+                with share_tabs[1]:
+                    st.subheader("Export Data and Analysis")
+                    
+                    # Export current chart data
+                    st.markdown("### Export Chart Data")
+                    
+                    export_options = st.multiselect("Select what to export:", 
+                        ["Price Data", "Detected Patterns", "Technical Indicators"], 
+                        default=["Price Data"])
+                    
+                    export_format = st.radio("Export format:", ["CSV", "JSON", "Excel"])
+                    
+                    if st.button("Generate Export"):
+                        # Prepare export data
+                        export_data = data.copy()
+                        
+                        # Filter columns based on selection
+                        selected_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                        
+                        if "Technical Indicators" in export_options:
+                            if 'RSI' in export_data.columns:
+                                selected_columns.append('RSI')
+                            if 'MACD' in export_data.columns:
+                                selected_columns.extend(['MACD', 'MACD_Signal', 'MACD_Histogram'])
+                            if 'BB_Upper' in export_data.columns:
+                                selected_columns.extend(['BB_Upper', 'BB_Middle', 'BB_Lower'])
+                            if 'SMA_20' in export_data.columns:
+                                selected_columns.extend(['SMA_20', 'SMA_50', 'SMA_200'])
+                        
+                        # Adjust for different formats
+                        if export_format == "CSV":
+                            csv_buffer = StringIO()
+                            export_data[selected_columns].to_csv(csv_buffer)
+                            export_bytes = csv_buffer.getvalue().encode()
+                            mime_type = "text/csv"
+                            file_extension = "csv"
+                        elif export_format == "JSON":
+                            export_bytes = export_data[selected_columns].to_json(date_format='iso').encode()
+                            mime_type = "application/json"
+                            file_extension = "json"
+                        else:  # Excel
+                            # For Excel we use CSV as a fallback
+                            csv_buffer = StringIO()
+                            export_data[selected_columns].to_csv(csv_buffer)
+                            export_bytes = csv_buffer.getvalue().encode()
+                            mime_type = "text/csv"
+                            file_extension = "csv"
+                        
+                        # Create download button
+                        st.download_button(
+                            label=f"Download {symbol} data as {export_format}",
+                            data=export_bytes,
+                            file_name=f"{symbol}_analysis.{file_extension}",
+                            mime=mime_type
+                        )
+                
+                # Generate Image Tab
+                with share_tabs[2]:
+                    st.subheader("Generate Shareable Image")
+                    
+                    # Select pattern for image
+                    if detected_pattern_types:
+                        image_pattern_type = st.selectbox("Select pattern for image:", detected_pattern_types, key="image_pattern_select")
+                        
+                        # Get pattern-specific data
+                        orig_pattern_name = image_pattern_type.lower().replace(' ', '_')
+                        if orig_pattern_name in patterns and patterns[orig_pattern_name]:
+                            # For standard patterns
+                            pattern_locations = patterns[orig_pattern_name]
+                            if pattern_locations:
+                                if isinstance(pattern_locations[0], list):
+                                    idx_val = pattern_locations[-1][-1]
+                                else:
+                                    idx_val = pattern_locations[-1]
+                                
+                                pattern_price = float(data['Close'].iloc[idx_val])
+                                pattern_date = data.index[idx_val].strftime('%Y-%m-%d')
+                                
+                                # Customize image notes
+                                image_notes = st.text_area("Add notes to the image:", 
+                                    value=f"Pattern detected with {sensitivity}/10 sensitivity", key="image_notes")
+                                
+                                # Generate the image
+                                if st.button("Generate Image"):
+                                    # Create a copy of the figure for the image
+                                    img_fig = create_candlestick_chart(data, symbol)
+                                    img_fig = add_pattern_shapes(img_fig, data, patterns)
+                                    
+                                    # Create the shareable image
+                                    img_b64 = create_shareable_image(
+                                        img_fig, 
+                                        symbol, 
+                                        image_pattern_type, 
+                                        pattern_price, 
+                                        pattern_date,
+                                        image_notes
+                                    )
+                                    
+                                    # Display the image
+                                    st.markdown("### Your Shareable Image")
+                                    st.markdown(f"<img src='data:image/png;base64,{img_b64}' style='width:100%'>", unsafe_allow_html=True)
+                                    
+                                    # Download option
+                                    image_bytes = base64.b64decode(img_b64)
+                                    st.download_button(
+                                        label="Download Image",
+                                        data=image_bytes,
+                                        file_name=f"{symbol}_{image_pattern_type.replace(' ', '_')}.png",
+                                        mime="image/png"
+                                    )
+                        else:
+                            st.info(f"No specific data available for {image_pattern_type} pattern.")
+                    else:
+                        st.info("No patterns were detected to generate an image. Try adjusting the pattern detection settings.")
             
             # Data table with download option
             st.header("Historical Data")
