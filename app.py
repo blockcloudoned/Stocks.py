@@ -226,7 +226,7 @@ if fetch_button or 'data' in st.session_state:
                     # Store pattern detection in the database
                     for idx in patterns['double_bottoms'][-3:]:  # Store only the most recent ones
                         idx_val = idx[-1] if isinstance(idx, list) else idx
-                        pattern_price = data['Close'].iloc[idx_val]
+                        pattern_price = float(data['Close'].iloc[idx_val])
                         try:
                             save_pattern_detection(
                                 symbol=symbol,
@@ -248,14 +248,20 @@ if fetch_button or 'data' in st.session_state:
                     # Store pattern detection in the database
                     for idx in patterns['double_tops'][-3:]:  # Store only the most recent ones
                         idx_val = idx[-1] if isinstance(idx, list) else idx
-                        pattern_price = data['Close'].iloc[idx_val]
-                        save_pattern_detection(
-                            symbol=symbol,
-                            pattern_type="Double Top",
-                            price=pattern_price,
-                            confidence=sensitivity / 10.0,
-                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
-                        )
+                        pattern_price = float(data['Close'].iloc[idx_val])
+                        try:
+                            save_pattern_detection(
+                                symbol=symbol,
+                                pattern_type="Double Top",
+                                price=pattern_price,
+                                confidence=sensitivity / 10.0,
+                                notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                            )
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error saving pattern detection: {str(e)}")
+                            st.session_state.db_status = 'error'
                         detected_patterns.append("Double Top")
             
             if detect_head_shoulders:
@@ -264,14 +270,20 @@ if fetch_button or 'data' in st.session_state:
                     # Store pattern detection in the database
                     for idx in patterns['head_shoulders'][-3:]:  # Store only the most recent ones
                         idx_val = idx[-1] if isinstance(idx, list) else idx
-                        pattern_price = data['Close'].iloc[idx_val]
-                        save_pattern_detection(
-                            symbol=symbol,
-                            pattern_type="Head and Shoulders",
-                            price=pattern_price,
-                            confidence=sensitivity / 10.0,
-                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
-                        )
+                        pattern_price = float(data['Close'].iloc[idx_val])
+                        try:
+                            save_pattern_detection(
+                                symbol=symbol,
+                                pattern_type="Head and Shoulders",
+                                price=pattern_price,
+                                confidence=sensitivity / 10.0,
+                                notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                            )
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error saving pattern detection: {str(e)}")
+                            st.session_state.db_status = 'error'
                         detected_patterns.append("Head and Shoulders")
             
             if detect_inv_head_shoulders:
@@ -280,14 +292,20 @@ if fetch_button or 'data' in st.session_state:
                     # Store pattern detection in the database
                     for idx in patterns['inv_head_shoulders'][-3:]:  # Store only the most recent ones
                         idx_val = idx[-1] if isinstance(idx, list) else idx
-                        pattern_price = data['Close'].iloc[idx_val]
-                        save_pattern_detection(
-                            symbol=symbol,
-                            pattern_type="Inverse Head and Shoulders",
-                            price=pattern_price,
-                            confidence=sensitivity / 10.0,
-                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
-                        )
+                        pattern_price = float(data['Close'].iloc[idx_val])
+                        try:
+                            save_pattern_detection(
+                                symbol=symbol,
+                                pattern_type="Inverse Head and Shoulders",
+                                price=pattern_price,
+                                confidence=sensitivity / 10.0,
+                                notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                            )
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error saving pattern detection: {str(e)}")
+                            st.session_state.db_status = 'error'
                         detected_patterns.append("Inverse Head and Shoulders")
             
             if detect_triangles:
@@ -295,15 +313,21 @@ if fetch_button or 'data' in st.session_state:
                 if patterns['triangles']:
                     # Store pattern detection in the database
                     for triangle in patterns['triangles'][-3:]:  # Store only the most recent ones
-                        pattern_price = data['Close'].iloc[triangle['end_idx']]
+                        pattern_price = float(data['Close'].iloc[triangle['end_idx']])
                         triangle_type = triangle.get('type', 'Triangle')
-                        save_pattern_detection(
-                            symbol=symbol,
-                            pattern_type=f"{triangle_type} Triangle",
-                            price=pattern_price,
-                            confidence=sensitivity / 10.0,
-                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
-                        )
+                        try:
+                            save_pattern_detection(
+                                symbol=symbol,
+                                pattern_type=f"{triangle_type} Triangle",
+                                price=pattern_price,
+                                confidence=sensitivity / 10.0,
+                                notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                            )
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error saving pattern detection: {str(e)}")
+                            st.session_state.db_status = 'error'
                         detected_patterns.append(f"{triangle_type} Triangle")
             
             if detect_support_resistance:
