@@ -63,8 +63,48 @@ and analyze trading opportunities in stocks and cryptocurrencies.
 with st.sidebar:
     st.header("Input Parameters")
     
-    # Symbol input
-    symbol = st.text_input("Enter Symbol (e.g., AAPL, BTC-USD):", value="AAPL")
+    # Get user watchlists
+    watchlists = get_watchlists(st.session_state.user_id)
+    
+    # Combine symbols from all watchlists for selection
+    all_watchlist_symbols = []
+    for watchlist in watchlists:
+        all_watchlist_symbols.extend(watchlist["symbols"])
+    
+    # Remove duplicates
+    all_watchlist_symbols = list(set(all_watchlist_symbols))
+    
+    # Symbol input with watchlist selection
+    st.subheader("Symbol Selection")
+    symbol_selection_method = st.radio("Select source:", ["Enter Symbol", "From Watchlist"])
+    
+    if symbol_selection_method == "Enter Symbol":
+        symbol = st.text_input("Enter Symbol (e.g., AAPL, BTC-USD):", value="AAPL")
+        
+        # Add to watchlist option
+        add_to_watchlist_option = st.checkbox("Add to watchlist")
+        if add_to_watchlist_option:
+            # Get available watchlists or create new one
+            watchlist_names = [w["name"] for w in watchlists]
+            if not watchlist_names:
+                watchlist_names = ["Default Watchlist"]
+            
+            selected_watchlist = st.selectbox("Select watchlist", watchlist_names)
+            if st.button("Add Symbol to Watchlist"):
+                if add_to_watchlist(st.session_state.user_id, selected_watchlist, symbol):
+                    st.success(f"Added {symbol} to {selected_watchlist}")
+                else:
+                    st.info(f"{symbol} is already in {selected_watchlist}")
+    else:
+        # Filter out empty watchlists
+        populated_watchlists = [w for w in watchlists if w["symbols"]]
+        
+        if populated_watchlists:
+            # If we have symbols in the watchlists, allow selection
+            symbol = st.selectbox("Select from watchlist:", all_watchlist_symbols) if all_watchlist_symbols else "AAPL"
+        else:
+            st.info("Your watchlists are empty. Please add symbols first.")
+            symbol = "AAPL"
     
     # Date range
     st.subheader("Time Period")
@@ -126,24 +166,94 @@ if fetch_button or 'data' in st.session_state:
             
             # Detect patterns
             patterns = {}
+            detected_patterns = []
             
             if detect_double_bottoms:
                 patterns['double_bottoms'] = detect_double_bottom(data, sensitivity=sensitivity)
+                if patterns['double_bottoms']:
+                    # Store pattern detection in the database
+                    for idx in patterns['double_bottoms'][-3:]:  # Store only the most recent ones
+                        idx_val = idx[-1] if isinstance(idx, list) else idx
+                        pattern_price = data['Close'].iloc[idx_val]
+                        save_pattern_detection(
+                            symbol=symbol,
+                            pattern_type="Double Bottom",
+                            price=pattern_price,
+                            confidence=sensitivity / 10.0,
+                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                        )
+                        detected_patterns.append("Double Bottom")
             
             if detect_double_tops:
                 patterns['double_tops'] = detect_double_top(data, sensitivity=sensitivity)
+                if patterns['double_tops']:
+                    # Store pattern detection in the database
+                    for idx in patterns['double_tops'][-3:]:  # Store only the most recent ones
+                        idx_val = idx[-1] if isinstance(idx, list) else idx
+                        pattern_price = data['Close'].iloc[idx_val]
+                        save_pattern_detection(
+                            symbol=symbol,
+                            pattern_type="Double Top",
+                            price=pattern_price,
+                            confidence=sensitivity / 10.0,
+                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                        )
+                        detected_patterns.append("Double Top")
             
             if detect_head_shoulders:
                 patterns['head_shoulders'] = detect_head_and_shoulders(data, sensitivity=sensitivity)
+                if patterns['head_shoulders']:
+                    # Store pattern detection in the database
+                    for idx in patterns['head_shoulders'][-3:]:  # Store only the most recent ones
+                        idx_val = idx[-1] if isinstance(idx, list) else idx
+                        pattern_price = data['Close'].iloc[idx_val]
+                        save_pattern_detection(
+                            symbol=symbol,
+                            pattern_type="Head and Shoulders",
+                            price=pattern_price,
+                            confidence=sensitivity / 10.0,
+                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                        )
+                        detected_patterns.append("Head and Shoulders")
             
             if detect_inv_head_shoulders:
                 patterns['inv_head_shoulders'] = detect_inverse_head_and_shoulders(data, sensitivity=sensitivity)
+                if patterns['inv_head_shoulders']:
+                    # Store pattern detection in the database
+                    for idx in patterns['inv_head_shoulders'][-3:]:  # Store only the most recent ones
+                        idx_val = idx[-1] if isinstance(idx, list) else idx
+                        pattern_price = data['Close'].iloc[idx_val]
+                        save_pattern_detection(
+                            symbol=symbol,
+                            pattern_type="Inverse Head and Shoulders",
+                            price=pattern_price,
+                            confidence=sensitivity / 10.0,
+                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                        )
+                        detected_patterns.append("Inverse Head and Shoulders")
             
             if detect_triangles:
                 patterns['triangles'] = detect_triangle(data, sensitivity=sensitivity)
+                if patterns['triangles']:
+                    # Store pattern detection in the database
+                    for triangle in patterns['triangles'][-3:]:  # Store only the most recent ones
+                        pattern_price = data['Close'].iloc[triangle['end_idx']]
+                        triangle_type = triangle.get('type', 'Triangle')
+                        save_pattern_detection(
+                            symbol=symbol,
+                            pattern_type=f"{triangle_type} Triangle",
+                            price=pattern_price,
+                            confidence=sensitivity / 10.0,
+                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                        )
+                        detected_patterns.append(f"{triangle_type} Triangle")
             
             if detect_support_resistance:
                 patterns['support'], patterns['resistance'] = find_support_resistance(data, sensitivity=sensitivity)
+                
+            # Show notification if new patterns were detected
+            if detected_patterns:
+                st.success(f"Detected and saved the following patterns: {', '.join(set(detected_patterns))}")
             
             # Display data summary
             st.header(f"{symbol} Data Summary")
@@ -267,27 +377,69 @@ if fetch_button or 'data' in st.session_state:
             
             # Detected Patterns Tab
             with pattern_tabs[0]:
-                if sum(len(p) for p in patterns.values() if isinstance(p, list)) > 0:
-                    st.markdown("### Recently Detected Patterns")
+                st.markdown("### Recently Detected Patterns")
+                
+                # Create tabs for current detection and historical detections
+                detection_tabs = st.tabs(["Current Analysis", "Historical Detections"])
+                
+                # Current Analysis Tab - shows patterns detected in the current chart
+                with detection_tabs[0]:
+                    if sum(len(p) for p in patterns.values() if isinstance(p, list)) > 0:
+                        for pattern_name, pattern_locations in patterns.items():
+                            if isinstance(pattern_locations, tuple):
+                                # Handle support/resistance which returns a tuple
+                                continue
+                            
+                            if pattern_locations and len(pattern_locations) > 0:
+                                formatted_name = pattern_name.replace('_', ' ').title()
+                                st.subheader(f"{formatted_name}")
+                                
+                                pattern_df = pd.DataFrame({
+                                    "Date": [data.index[idx[-1]] if isinstance(idx, list) else data.index[idx] for idx in pattern_locations[-5:]],
+                                    "Price at Pattern": [data['Close'][idx[-1]] if isinstance(idx, list) else data['Close'][idx] for idx in pattern_locations[-5:]],
+                                    "Pattern Strength": [f"{(sensitivity / 10.0 * 100):.0f}%" for _ in pattern_locations[-5:]]
+                                })
+                                
+                                st.dataframe(pattern_df)
+                    else:
+                        st.info("No patterns were detected with the current settings. Try adjusting the sensitivity or selecting different patterns.")
+                
+                # Historical Detections Tab - shows patterns from the database
+                with detection_tabs[1]:
+                    # Get recent pattern detections for this symbol from the database
+                    recent_patterns = get_recent_pattern_detections(symbol)
                     
-                    for pattern_name, pattern_locations in patterns.items():
-                        if isinstance(pattern_locations, tuple):
-                            # Handle support/resistance which returns a tuple
-                            continue
+                    if recent_patterns:
+                        # Group by pattern type
+                        pattern_types = {}
+                        for p in recent_patterns:
+                            pattern_type = p['pattern_type']
+                            if pattern_type not in pattern_types:
+                                pattern_types[pattern_type] = []
+                            pattern_types[pattern_type].append(p)
                         
-                        if pattern_locations and len(pattern_locations) > 0:
-                            formatted_name = pattern_name.replace('_', ' ').title()
-                            st.subheader(f"{formatted_name}")
+                        # Display each pattern type
+                        for pattern_type, patterns_list in pattern_types.items():
+                            st.subheader(f"{pattern_type}")
                             
-                            pattern_df = pd.DataFrame({
-                                "Date": [data.index[idx[-1]] if isinstance(idx, list) else data.index[idx] for idx in pattern_locations[-5:]],
-                                "Price at Pattern": [data['Close'][idx[-1]] if isinstance(idx, list) else data['Close'][idx] for idx in pattern_locations[-5:]],
-                                "Pattern Strength": [f"{np.random.randint(60, 95)}%" for _ in pattern_locations[-5:]]
-                            })
+                            pattern_data = []
+                            for p in patterns_list:
+                                # Format the date
+                                detection_date = p['detection_date']
+                                if hasattr(detection_date, 'strftime'):
+                                    date_str = detection_date.strftime("%Y-%m-%d %H:%M")
+                                else:
+                                    date_str = str(detection_date)
+                                    
+                                pattern_data.append({
+                                    "Date": date_str,
+                                    "Price": f"${p['price_at_detection']:.2f}",
+                                    "Confidence": f"{(p['confidence'] * 100):.0f}%"
+                                })
                             
-                            st.dataframe(pattern_df)
-                else:
-                    st.info("No patterns were detected with the current settings. Try adjusting the sensitivity or selecting different patterns.")
+                            st.dataframe(pd.DataFrame(pattern_data))
+                    else:
+                        st.info(f"No historical pattern detections for {symbol} in the database. Analyze the chart to save patterns.")
             
             # Pattern Statistics Tab
             with pattern_tabs[1]:
@@ -382,22 +534,40 @@ if fetch_button or 'data' in st.session_state:
                 st.metric("Account Balance", f"${st.session_state.balance:.2f}")
                 
                 # Display current positions
-                if st.session_state.positions:
+                # Refresh positions data from database
+                positions = get_positions(st.session_state.user_id)
+                st.session_state.positions = positions
+                
+                if positions:
                     positions_data = []
-                    for sym, pos in st.session_state.positions.items():
-                        current_price = data['Close'].iloc[-1] if sym == symbol else 0  # In real app, fetch price for each symbol
-                        if current_price == 0:
-                            current_value = pos['quantity'] * pos['price']  # Fallback if we don't have current price
+                    for pos in positions:
+                        # Handle both dict format and database object format
+                        if isinstance(pos, dict):
+                            sym = pos['symbol']
+                            quantity = pos['quantity']
+                            avg_price = pos['average_price']
                         else:
-                            current_value = pos['quantity'] * current_price
+                            sym = pos.symbol
+                            quantity = pos.quantity
+                            avg_price = pos.average_price
                         
-                        profit_loss = current_value - (pos['quantity'] * pos['price'])
-                        profit_loss_pct = (profit_loss / (pos['quantity'] * pos['price'])) * 100
+                        # Get current price for the symbol
+                        current_price = data['Close'].iloc[-1] if sym == symbol else 0
+                        
+                        # Calculate position value
+                        if current_price == 0:
+                            current_value = quantity * avg_price  # Fallback if we don't have current price
+                        else:
+                            current_value = quantity * current_price
+                        
+                        # Calculate profit/loss
+                        profit_loss = current_value - (quantity * avg_price)
+                        profit_loss_pct = (profit_loss / (quantity * avg_price)) * 100 if (quantity * avg_price) > 0 else 0
                         
                         positions_data.append({
                             "Symbol": sym,
-                            "Quantity": pos['quantity'],
-                            "Entry Price": f"${pos['price']:.2f}",
+                            "Quantity": quantity,
+                            "Entry Price": f"${avg_price:.2f}",
                             "Current Price": f"${current_price:.2f}" if current_price > 0 else "Unknown",
                             "Current Value": f"${current_value:.2f}",
                             "Profit/Loss": f"${profit_loss:.2f} ({profit_loss_pct:.2f}%)"
