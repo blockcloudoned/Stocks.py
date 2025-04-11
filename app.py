@@ -343,6 +343,11 @@ if fetch_button or 'data' in st.session_state:
                 signals = sorted(signals, key=lambda x: x["Date"], reverse=True)
                 
                 if signals:
+                    # Convert datetime index to string to avoid format errors
+                    for signal in signals:
+                        if isinstance(signal["Date"], pd.Timestamp):
+                            signal["Date"] = signal["Date"].strftime('%Y-%m-%d')
+                    
                     signals_df = pd.DataFrame(signals)
                     st.dataframe(signals_df)
                 else:
@@ -473,14 +478,22 @@ if fetch_button or 'data' in st.session_state:
                 if st.session_state.trades:
                     st.subheader("Trade History")
                     
-                    trades_data = [{
-                        "Time": t['time'].strftime("%Y-%m-%d %H:%M"),
-                        "Symbol": t['symbol'],
-                        "Action": t['action'],
-                        "Quantity": t['quantity'],
-                        "Price": f"${t['price']:.2f}",
-                        "Value": f"${t['value']:.2f}"
-                    } for t in st.session_state.trades]
+                    trades_data = []
+                    for t in st.session_state.trades:
+                        # Handle any potential timestamp formatting issues
+                        try:
+                            time_str = t['time'].strftime("%Y-%m-%d %H:%M")
+                        except:
+                            time_str = str(t['time'])
+                            
+                        trades_data.append({
+                            "Time": time_str,
+                            "Symbol": t['symbol'],
+                            "Action": t['action'],
+                            "Quantity": t['quantity'],
+                            "Price": f"${t['price']:.2f}",
+                            "Value": f"${t['value']:.2f}"
+                        })
                     
                     trades_df = pd.DataFrame(trades_data)
                     st.dataframe(trades_df)

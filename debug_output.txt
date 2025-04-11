@@ -1,0 +1,8 @@
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+2025-04-11 07:37:57.385 No singleton. Registering one.
+2025-04-11 07:37:57.388 Watcher created for /home/runner/workspace/.streamlit/config.toml
+2025-04-11 07:37:57.395 Starting server...
+2025-04-11 07:37:57.395 Serving static content from /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/streamlit/static
+2025-04-11 07:37:57.397 Port 5000 is already in use
