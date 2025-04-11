@@ -1,14 +1,36 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
+import time
+import logging
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, exc, text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.orm import relationship, sessionmaker, scoped_session
+from sqlalchemy.pool import QueuePool
 import datetime
 
-# Create database connection
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create database connection with connection pooling and retry logic
 DATABASE_URL = os.environ.get('DATABASE_URL')
-engine = create_engine(DATABASE_URL)
+
+# Configure engine with connection pooling
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=1800,  # Recycle connections after 30 minutes
+    connect_args={
+        'connect_timeout': 10,
+        'application_name': 'StockPatternApp'
+    }
+)
+
 Base = declarative_base()
-Session = sessionmaker(bind=engine)
+session_factory = sessionmaker(bind=engine)
+Session = scoped_session(session_factory)
 
 class User(Base):
     """User profile for saving preferences and trading history"""
@@ -116,6 +138,34 @@ class UserPreference(Base):
 def init_db():
     Base.metadata.create_all(engine)
 
-# Get a database session
+# Get a database session with retry logic
 def get_session():
-    return Session()
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Create a new session
+            session = Session()
+            
+            # Test the connection with a simple query
+            session.execute(text("SELECT 1"))
+            
+            return session
+        except exc.OperationalError as e:
+            logger.warning(f"Database connection error (attempt {attempt+1}/{max_retries}): {str(e)}")
+            Session.remove()  # Remove the session from the registry
+            
+            if attempt < max_retries - 1:
+                # Wait before retrying
+                time.sleep(retry_delay)
+                # Increase delay for next attempt
+                retry_delay *= 2
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts")
+                # Re-raise the exception
+                raise
+        except Exception as e:
+            logger.error(f"Unexpected database error: {str(e)}")
+            Session.remove()
+            raise

@@ -7,9 +7,55 @@ from models import (
     Trade,
     Position,
     PatternDetection,
-    UserPreference
+    UserPreference,
+    Session,
+    logger
 )
 import datetime
+import functools
+import time
+from sqlalchemy import exc
+
+def safe_db_operation(max_retries=3, initial_delay=1):
+    """
+    Decorator for database operations with retry logic for transient errors.
+    
+    Args:
+        max_retries (int): Maximum number of retry attempts
+        initial_delay (int): Initial delay between retries in seconds (doubles on each retry)
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except exc.OperationalError as e:
+                    last_error = e
+                    error_msg = str(e)
+                    logger.warning(f"Database operation error in {func.__name__} (attempt {attempt+1}/{max_retries}): {error_msg}")
+                    
+                    # Clean up any lingering sessions
+                    Session.remove()
+                    
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {delay} seconds...")
+                        time.sleep(delay)
+                        delay *= 2
+                except Exception as e:
+                    # For non-operational errors, log and re-raise immediately
+                    logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
+                    raise
+            
+            # If we get here, all retries failed
+            logger.error(f"All {max_retries} attempts failed in {func.__name__}")
+            raise last_error
+        
+        return wrapper
+    return decorator
 
 def initialize_database():
     """Initialize the database and create tables if they don't exist"""
@@ -76,23 +122,29 @@ def get_user(username="default_user"):
     session.close()
     return user_data
 
+@safe_db_operation()
 def get_watchlists(user_id):
     """Get all watchlists for a user"""
     session = get_session()
-    watchlists = session.query(Watchlist).filter_by(user_id=user_id).all()
-    
-    result = []
-    for watchlist in watchlists:
-        symbols = [ws.symbol for ws in watchlist.symbols]
-        result.append({
-            "id": watchlist.id,
-            "name": watchlist.name,
-            "symbols": symbols,
-            "created_at": watchlist.created_at
-        })
-    
-    session.close()
-    return result
+    try:
+        watchlists = session.query(Watchlist).filter_by(user_id=user_id).all()
+        
+        result = []
+        for watchlist in watchlists:
+            symbols = [ws.symbol for ws in watchlist.symbols]
+            result.append({
+                "id": watchlist.id,
+                "name": watchlist.name,
+                "symbols": symbols,
+                "created_at": watchlist.created_at
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_watchlists: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def add_to_watchlist(user_id, watchlist_name, symbol, notes=None):
     """Add a symbol to a watchlist, creating the watchlist if it doesn't exist"""
@@ -260,24 +312,29 @@ def get_trades(user_id, limit=50):
     session.close()
     return result
 
+@safe_db_operation()
 def get_positions(user_id):
     """Get current positions for a user"""
     session = get_session()
-    
-    positions = session.query(Position).filter_by(user_id=user_id).all()
-    
-    result = []
-    for position in positions:
-        result.append({
-            "id": position.id,
-            "symbol": position.symbol,
-            "quantity": position.quantity,
-            "average_price": position.average_price,
-            "current_value": position.quantity * position.average_price  # This will be updated with current price in UI
-        })
-    
-    session.close()
-    return result
+    try:
+        positions = session.query(Position).filter_by(user_id=user_id).all()
+        
+        result = []
+        for position in positions:
+            result.append({
+                "id": position.id,
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "average_price": position.average_price,
+                "current_value": position.quantity * position.average_price  # This will be updated with current price in UI
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_positions: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def get_user_preferences(user_id):
     """Get user preferences"""
@@ -323,54 +380,64 @@ def update_user_preferences(user_id, preferences_dict):
     session.close()
     return True
 
+@safe_db_operation()
 def save_pattern_detection(symbol, pattern_type, price, confidence=0.5, notes=None):
     """Save a detected pattern to the database"""
     session = get_session()
-    
-    pattern = PatternDetection(
-        symbol=symbol,
-        pattern_type=pattern_type,
-        price_at_detection=price,
-        confidence=confidence,
-        notes=notes
-    )
-    session.add(pattern)
-    session.commit()
-    
-    result = {
-        "id": pattern.id,
-        "symbol": pattern.symbol,
-        "pattern_type": pattern.pattern_type,
-        "detection_date": pattern.detection_date,
-        "price_at_detection": pattern.price_at_detection,
-        "confidence": pattern.confidence
-    }
-    
-    session.close()
-    return result
-
-def get_recent_pattern_detections(symbol=None, limit=20):
-    """Get recently detected patterns"""
-    session = get_session()
-    
-    query = session.query(PatternDetection).order_by(PatternDetection.detection_date.desc())
-    if symbol:
-        query = query.filter_by(symbol=symbol)
-    
-    patterns = query.limit(limit).all()
-    
-    result = []
-    for pattern in patterns:
-        result.append({
+    try:
+        pattern = PatternDetection(
+            symbol=symbol,
+            pattern_type=pattern_type,
+            price_at_detection=price,
+            confidence=confidence,
+            notes=notes
+        )
+        session.add(pattern)
+        session.commit()
+        
+        result = {
             "id": pattern.id,
             "symbol": pattern.symbol,
             "pattern_type": pattern.pattern_type,
             "detection_date": pattern.detection_date,
             "price_at_detection": pattern.price_at_detection,
-            "confidence": pattern.confidence,
-            "is_validated": pattern.is_validated,
-            "notes": pattern.notes
-        })
-    
-    session.close()
-    return result
+            "confidence": pattern.confidence
+        }
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in save_pattern_detection: {str(e)}")
+        raise
+    finally:
+        session.close()
+
+@safe_db_operation()
+def get_recent_pattern_detections(symbol=None, limit=20):
+    """Get recently detected patterns"""
+    session = get_session()
+    try:
+        query = session.query(PatternDetection).order_by(PatternDetection.detection_date.desc())
+        if symbol:
+            query = query.filter_by(symbol=symbol)
+        
+        patterns = query.limit(limit).all()
+        
+        result = []
+        for pattern in patterns:
+            result.append({
+                "id": pattern.id,
+                "symbol": pattern.symbol,
+                "pattern_type": pattern.pattern_type,
+                "detection_date": pattern.detection_date,
+                "price_at_detection": pattern.price_at_detection,
+                "confidence": pattern.confidence,
+                "is_validated": pattern.is_validated,
+                "notes": pattern.notes
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_recent_pattern_detections: {str(e)}")
+        raise
+    finally:
+        session.close()
