@@ -15,6 +15,7 @@ from utils.technical_indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_moving_averages
 )
 from utils.chart_utils import add_pattern_shapes, create_candlestick_chart
+from utils.sharing import create_shareable_image, export_pattern_data, get_social_share_html, get_sharing_link
 
 # Import database functions
 from database import (
@@ -454,7 +455,8 @@ if fetch_button or 'data' in st.session_state:
                 "Detected Patterns", 
                 "Pattern Statistics", 
                 "Trading Signals",
-                "Virtual Trading"
+                "Virtual Trading",
+                "Share & Export"
             ])
             
             # Detected Patterns Tab
