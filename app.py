@@ -36,21 +36,57 @@ if 'db_initialized' not in st.session_state:
     initialize_database()
     st.session_state.db_initialized = True
 
-# Initialize session state variables
-if 'user_id' not in st.session_state:
-    # Get the default user
-    user = get_user("default_user")
-    st.session_state.user_id = user["id"]
-    st.session_state.username = user["username"]
-    st.session_state.balance = user["balance"]
+# Add database status state
+if 'db_status' not in st.session_state:
+    st.session_state.db_status = 'connected'
 
-# Cache the user's positions and trades (we'll refresh these when needed)
-if 'positions' not in st.session_state:
-    st.session_state.positions = get_positions(st.session_state.user_id)
-if 'trades' not in st.session_state:
-    st.session_state.trades = get_trades(st.session_state.user_id)
-if 'preferences' not in st.session_state:
-    st.session_state.preferences = get_user_preferences(st.session_state.user_id)
+# Initialize session state variables with error handling
+try:
+    if 'user_id' not in st.session_state:
+        # Get the default user
+        user = get_user("default_user")
+        st.session_state.user_id = user["id"]
+        st.session_state.username = user["username"]
+        st.session_state.balance = user["balance"]
+    
+    # Cache the user's positions and trades (we'll refresh these when needed)
+    if 'positions' not in st.session_state:
+        st.session_state.positions = get_positions(st.session_state.user_id)
+    if 'trades' not in st.session_state:
+        st.session_state.trades = get_trades(st.session_state.user_id)
+    
+    # Successful database access - reset error status if it was set
+    st.session_state.db_status = 'connected'
+except Exception as e:
+    import logging
+    logging.error(f"Database connection error: {str(e)}")
+    st.session_state.db_status = 'error'
+    
+    # Initialize with defaults if needed
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = 1
+        st.session_state.username = "default_user"
+        st.session_state.balance = 10000.0
+    if 'positions' not in st.session_state:
+        st.session_state.positions = []
+    if 'trades' not in st.session_state:
+        st.session_state.trades = []
+try:
+    if 'preferences' not in st.session_state:
+        st.session_state.preferences = get_user_preferences(st.session_state.user_id)
+except Exception as e:
+    import logging
+    logging.error(f"Error loading user preferences: {str(e)}")
+    # Default preferences
+    st.session_state.preferences = {
+        "default_chart_type": "candlestick",
+        "default_time_period": "1y",
+        "default_symbol": "BTC-USD",
+        "pattern_sensitivity": 5,
+        "show_volume": True,
+        "show_moving_averages": True,
+        "theme": "light"
+    }
 
 # App title and description
 st.title("📊 Stock & Crypto Pattern Detector")
@@ -63,8 +99,17 @@ and analyze trading opportunities in stocks and cryptocurrencies.
 with st.sidebar:
     st.header("Input Parameters")
     
-    # Get user watchlists
-    watchlists = get_watchlists(st.session_state.user_id)
+    # Get user watchlists with error handling
+    try:
+        watchlists = get_watchlists(st.session_state.user_id)
+        st.session_state.db_status = 'connected'
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting watchlists: {str(e)}")
+        watchlists = []
+        st.session_state.db_status = 'error'
+        # Show database error message
+        st.error("⚠️ Database connection error. Some features may be unavailable.")
     
     # Combine symbols from all watchlists for selection
     all_watchlist_symbols = []
@@ -91,10 +136,17 @@ with st.sidebar:
             
             selected_watchlist = st.selectbox("Select watchlist", watchlist_names)
             if st.button("Add Symbol to Watchlist"):
-                if add_to_watchlist(st.session_state.user_id, selected_watchlist, symbol):
-                    st.success(f"Added {symbol} to {selected_watchlist}")
-                else:
-                    st.info(f"{symbol} is already in {selected_watchlist}")
+                try:
+                    if add_to_watchlist(st.session_state.user_id, selected_watchlist, symbol):
+                        st.success(f"Added {symbol} to {selected_watchlist}")
+                        st.session_state.db_status = 'connected'
+                    else:
+                        st.info(f"{symbol} is already in {selected_watchlist}")
+                except Exception as e:
+                    import logging
+                    logging.error(f"Error adding to watchlist: {str(e)}")
+                    st.error(f"Unable to add {symbol} to watchlist due to database error.")
+                    st.session_state.db_status = 'error'
     else:
         # Filter out empty watchlists
         populated_watchlists = [w for w in watchlists if w["symbols"]]
@@ -175,13 +227,19 @@ if fetch_button or 'data' in st.session_state:
                     for idx in patterns['double_bottoms'][-3:]:  # Store only the most recent ones
                         idx_val = idx[-1] if isinstance(idx, list) else idx
                         pattern_price = data['Close'].iloc[idx_val]
-                        save_pattern_detection(
-                            symbol=symbol,
-                            pattern_type="Double Bottom",
-                            price=pattern_price,
-                            confidence=sensitivity / 10.0,
-                            notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
-                        )
+                        try:
+                            save_pattern_detection(
+                                symbol=symbol,
+                                pattern_type="Double Bottom",
+                                price=pattern_price,
+                                confidence=sensitivity / 10.0,
+                                notes=f"Detected at price ${pattern_price:.2f} with sensitivity {sensitivity}"
+                            )
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error saving pattern detection: {str(e)}")
+                            st.session_state.db_status = 'error'
                         detected_patterns.append("Double Bottom")
             
             if detect_double_tops:
@@ -407,7 +465,15 @@ if fetch_button or 'data' in st.session_state:
                 # Historical Detections Tab - shows patterns from the database
                 with detection_tabs[1]:
                     # Get recent pattern detections for this symbol from the database
-                    recent_patterns = get_recent_pattern_detections(symbol)
+                    try:
+                        recent_patterns = get_recent_pattern_detections(symbol)
+                        st.session_state.db_status = 'connected'
+                    except Exception as e:
+                        import logging
+                        logging.error(f"Error retrieving pattern detections: {str(e)}")
+                        recent_patterns = []
+                        st.session_state.db_status = 'error'
+                        st.error("⚠️ Unable to retrieve historical pattern data due to database error.")
                     
                     if recent_patterns:
                         # Group by pattern type
@@ -535,8 +601,16 @@ if fetch_button or 'data' in st.session_state:
                 
                 # Display current positions
                 # Refresh positions data from database
-                positions = get_positions(st.session_state.user_id)
-                st.session_state.positions = positions
+                try:
+                    positions = get_positions(st.session_state.user_id)
+                    st.session_state.positions = positions
+                    st.session_state.db_status = 'connected'
+                except Exception as e:
+                    import logging
+                    logging.error(f"Error getting positions: {str(e)}")
+                    positions = st.session_state.positions  # Use cached positions
+                    st.session_state.db_status = 'error'
+                    st.error("⚠️ Unable to refresh positions due to database error.")
                 
                 if positions:
                     positions_data = []
@@ -598,24 +672,49 @@ if fetch_button or 'data' in st.session_state:
                     trade_value = current_price * trade_quantity
                     
                     # Save trade in database
-                    trade_result = record_trade(
-                        st.session_state.user_id,
-                        trade_symbol,
-                        trade_action,
-                        trade_quantity,
-                        current_price,
-                        notes=f"Trade executed from pattern detector app"
-                    )
+                    try:
+                        trade_result = record_trade(
+                            st.session_state.user_id,
+                            trade_symbol,
+                            trade_action,
+                            trade_quantity,
+                            current_price,
+                            notes=f"Trade executed from pattern detector app"
+                        )
+                        st.session_state.db_status = 'connected'
+                    except Exception as e:
+                        import logging
+                        logging.error(f"Error recording trade: {str(e)}")
+                        st.session_state.db_status = 'error'
+                        trade_result = {
+                            "success": False,
+                            "message": f"Could not execute trade due to database error: {str(e)}",
+                            "new_balance": st.session_state.balance
+                        }
                     
                     if trade_result["success"]:
                         # Update local session state
                         st.session_state.balance = trade_result["new_balance"]
                         
                         # Refresh positions from database
-                        st.session_state.positions = get_positions(st.session_state.user_id)
+                        try:
+                            st.session_state.positions = get_positions(st.session_state.user_id)
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error getting positions after trade: {str(e)}")
+                            # Positions already updated in trade_result
+                            st.session_state.db_status = 'error'
                         
                         # Refresh trades from database
-                        st.session_state.trades = get_trades(st.session_state.user_id)
+                        try:
+                            st.session_state.trades = get_trades(st.session_state.user_id)
+                            st.session_state.db_status = 'connected'
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Error getting trades after trade: {str(e)}")
+                            # Use existing trades data as fallback
+                            st.session_state.db_status = 'error'
                         
                         st.success(trade_result["message"])
                         st.rerun()
